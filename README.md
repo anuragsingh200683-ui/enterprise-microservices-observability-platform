@@ -262,13 +262,16 @@ full teardown:
 docker rmi local/eureka-server:1.0 local/employee-service:1.0 local/project-service:1.0 local/api-gateway:1.0
 ```
 
-## 18. Jenkins CI/CD Pipeline (optional)
+## 18. Jenkins CI/CD Pipelines
 
-A Jenkins pipeline can build all 4 images and deploy them to the same local
-cluster, driven by `Jenkinsfile` at the repo root.
+Each service owns its **own** `Jenkinsfile` (`eureka-server/Jenkinsfile`,
+`employee-service/Jenkinsfile`, `project-service/Jenkinsfile`,
+`api-gateway/Jenkinsfile`) and its own Jenkins pipeline job, so any one
+service can be rebuilt and redeployed independently without touching the
+other three.
 
 **Build and run the Jenkins container** (runs alongside the app stack, with
-the Docker socket and your kubeconfig mounted so its pipeline can build
+the Docker socket and your kubeconfig mounted so its pipelines can build
 images visible to the same Docker Desktop daemon and `kubectl apply`
 directly to the cluster):
 
@@ -297,16 +300,43 @@ docker run -d --name jenkins \
 `jenkins/casc.yaml`; this container skips the setup wizard entirely via
 Jenkins Configuration-as-Code — nothing to click through).
 
-**Create the pipeline job** (one-time; a classic Pipeline job, "Pipeline
-script from SCM" → Git → this repo's URL → branch `main` → script path
-`Jenkinsfile`), then click **Build Now**.
+**Create one pipeline job per service** (one-time each; a classic Pipeline
+job, "Pipeline script from SCM" → Git → this repo's URL → branch `main` →
+script path `<service>/Jenkinsfile`, e.g. `employee-service/Jenkinsfile`),
+then click **Build Now** on whichever one you want to run.
 
-The pipeline:
+Each service's pipeline:
 1. Checks out the repo.
-2. Builds all 4 images in parallel, tagged both `local/<service>:${BUILD_NUMBER}` and `:1.0`.
-3. `kubectl apply`s every manifest in `kubernetes/`.
-4. `kubectl set image`s each Deployment to the new `${BUILD_NUMBER}` tag and waits for `kubectl rollout status`.
-5. Smoke-tests `/api/employees` and `/api/projects` through the Gateway, retrying for up to a minute — right after a rollout, the Gateway's cached Eureka instance list can briefly still point at the just-terminated pod (Eureka's registry-fetch-interval is 30s), so a single immediate request can 500 even though the rollout itself succeeded.
+2. Builds only that service's image, tagged both `local/<service>:${BUILD_NUMBER}` and `:1.0`.
+3. `kubectl apply`s the namespace, the shared ConfigMap, and only that service's own Deployment + Service manifests.
+4. `kubectl set image`s that Deployment to the new `${BUILD_NUMBER}` tag and waits for `kubectl rollout status`.
+5. Smoke-tests by `kubectl exec`-ing into the deployment's own pod and hitting its actuator health endpoint directly — a self-check that doesn't depend on any other service, so one pipeline's smoke test never fails because of another service's state.
 
 Trigger is manual ("Build Now") by design, to avoid exposing a local Jenkins
 to the internet for a GitHub webhook.
+
+### Graphical stage-by-stage view (Blue Ocean)
+
+The Jenkins image bundles the **Blue Ocean** plugin, which renders each
+pipeline run as a horizontal graph of stages (Checkout → Build Image →
+Apply Manifests → Deploy to Kubernetes → Smoke Test), colored by status and
+clickable per stage for that stage's own log — the graphical view most
+people mean by "Jenkins pipeline stages."
+
+Open it at **http://localhost:8090/blue/** — pick a pipeline (e.g.
+`employee-service-deploy`) to see its run history and stage graph, or jump
+straight to a specific job's view at
+`http://localhost:8090/blue/organizations/jenkins/<job-name>/activity`.
+
+The classic Jenkins UI also shows a simpler colored "Stage View" table
+directly on each job's own page
+(`http://localhost:8090/job/<job-name>/`) if you don't want to switch UIs.
+
+> A rolling redeploy of `eureka-server` briefly resets its registry to
+> empty; already-running services re-register within ~10s, but the
+> **Gateway's own cached copy** of the registry only refreshes on its
+> `registry-fetch-interval` (default 30s) — so `/api/employees` and
+> `/api/projects` can return `503` for up to ~30s after an
+> `eureka-server-deploy` build, even though every pod is healthy. This is
+> expected convergence lag, not a failure — see `INTERVIEW-NOTES.md`'s
+> "What happens if Eureka is unavailable?" for the underlying mechanism.
