@@ -10,3 +10,17 @@ jenkins:
   authorizationStrategy:
     loggedInUsersCanDoAnything:
       allowAnonymousRead: false
+
+tool:
+  jdk:
+    installations:
+      - name: "JDK21"
+        home: "/opt/jdk21"
+  maven:
+    installations:
+      - name: "Maven_3"
+        home: "/opt/maven"
+  dockerTool:
+    installations:
+      - name: "Docker"
+        home: "/usr/local"

@@ -1,59 +1,68 @@
 pipeline {
     agent any
 
+    tools {
+        maven 'Maven_3'
+        jdk 'JDK21'
+        dockerTool 'Docker'
+    }
+
     environment {
-        NAMESPACE = 'microservices'
-        SERVICE   = 'employee-service'
-        REGISTRY  = 'localhost:5000'
+        REGISTRY_URL = "localhost:5000"
+        DOCKER_HOME  = tool 'Docker'
+        PATH         = "${DOCKER_HOME}/bin:${env.PATH}"
+        IMAGE_NAME   = "employee-service"
+        IMAGE_TAG    = "latest"
+        NAMESPACE    = "microservices"
     }
 
     stages {
+
         stage('Checkout') {
             steps {
-                checkout scm
+                git branch: 'main',
+                    url: 'https://github.com/anuragsingh200683-ui/enterprise-microservices-observability-platform.git'
             }
         }
 
-        stage('Build Image') {
+        stage('Build JAR') {
             steps {
-                sh '''
-                    docker build -t ${REGISTRY}/${SERVICE}:latest ./${SERVICE}
-                '''
+                dir('employee-service') {
+                    sh 'mvn clean package -DskipTests'
+                }
             }
         }
 
-        stage('Push Image') {
+        stage('Build Docker Image') {
             steps {
-                sh '''
-                    docker push ${REGISTRY}/${SERVICE}:latest
-                '''
-            }
-        }
-
-        stage('Apply Manifests') {
-            steps {
-                sh '''
-                    kubectl apply -f platform/namespace.yaml
-                    kubectl apply -f platform/microservices-configmap.yaml
-                    kubectl apply -f ${SERVICE}/k8deployment/deployment.yaml
-                '''
+                dir('employee-service') {
+                    sh """
+                        docker build -t ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG} .
+                        docker push ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}
+                    """
+                }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                sh '''
-                    kubectl rollout restart deployment/${SERVICE} -n ${NAMESPACE}
-                    kubectl rollout status deployment/${SERVICE} -n ${NAMESPACE} --timeout=180s
-                '''
+                sh """
+                    kubectl apply -f platform/namespace.yaml
+                    kubectl apply -f platform/microservices-configmap.yaml
+                    kubectl apply -f employee-service/k8deployment/deployment.yaml
+                    kubectl rollout restart deployment/${IMAGE_NAME} -n ${NAMESPACE}
+                """
             }
         }
 
-        stage('Smoke Test') {
+        stage('Verify Deployment') {
             steps {
-                sh '''
-                    kubectl exec -n ${NAMESPACE} deploy/${SERVICE} -- wget -qO- http://localhost:8081/actuator/health/readiness
-                '''
+                sh """
+                    kubectl rollout status deployment/${IMAGE_NAME} -n ${NAMESPACE} --timeout=180s
+                    kubectl get pods -n ${NAMESPACE} -o wide
+                    kubectl get svc -n ${NAMESPACE}
+                    kubectl exec -n ${NAMESPACE} deploy/${IMAGE_NAME} -- wget -qO- http://localhost:8081/actuator/health/readiness
+                """
             }
         }
     }

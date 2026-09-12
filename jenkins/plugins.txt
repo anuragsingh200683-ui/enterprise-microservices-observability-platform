@@ -2,3 +2,5 @@ git
 workflow-aggregator
 configuration-as-code
 blueocean
+maven-plugin
+docker-commons
