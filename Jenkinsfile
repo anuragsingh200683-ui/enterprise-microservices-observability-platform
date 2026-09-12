@@ -73,8 +73,25 @@ pipeline {
         stage('Smoke Test') {
             steps {
                 sh '''
-                    curl -sf http://host.docker.internal:30080/api/employees > /dev/null && echo "employees endpoint OK"
-                    curl -sf http://host.docker.internal:30080/api/projects > /dev/null && echo "projects endpoint OK"
+                    # A rollout leaves a short window where the Gateway's cached Eureka
+                    # instance list still points at the just-terminated pod (Eureka
+                    # registry-fetch-interval is 30s), so retry instead of failing on
+                    # the first NoRouteToHostException-driven 500.
+                    for path in /api/employees /api/projects; do
+                      ok=false
+                      for attempt in $(seq 1 12); do
+                        if curl -sf "http://host.docker.internal:30080${path}" > /dev/null; then
+                          echo "${path} OK (attempt ${attempt})"
+                          ok=true
+                          break
+                        fi
+                        sleep 5
+                      done
+                      if [ "$ok" != "true" ]; then
+                        echo "${path} failed after retries"
+                        exit 1
+                      fi
+                    done
                 '''
             }
         }
