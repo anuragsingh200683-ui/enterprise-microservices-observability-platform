@@ -3,10 +3,16 @@ kind: Deployment
 metadata:
   name: eureka-server
   namespace: microservices
-  labels:
+  labels: #
     app: eureka-server
 spec:
-  replicas: 1
+  replicas: 1 #kept at 1 - standalone Eureka replicas don't peer/share registry state, so 2 independent instances behind one Service would give clients an inconsistent view; see INTERVIEW-NOTES.md
+  revisionHistoryLimit: 5 #
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: eureka-server
@@ -21,8 +27,9 @@ spec:
     spec:
       containers:
         - name: eureka-server
-          image: local/eureka-server:1.0
-          imagePullPolicy: IfNotPresent
+          #image: eureka-server:latest
+          image: localhost:5000/eureka-server:latest #Here we are pushing eureka-server docker image into local docker repository
+          imagePullPolicy: Always #Always #Never # this is used for pull image every time from local docker repository not remote docker repository when we build docker eureka-server image
           ports:
             - containerPort: 8761
           resources:
@@ -44,3 +51,16 @@ spec:
               port: 8761
             initialDelaySeconds: 40
             periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eureka-server
+  namespace: microservices
+spec:
+  selector:
+    app: eureka-server
+  ports:
+    - port: 8761
+      targetPort: 8761
+  type: ClusterIP

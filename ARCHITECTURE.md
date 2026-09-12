@@ -114,6 +114,15 @@ Each service has a multi-stage Dockerfile:
 
 This keeps final images small and avoids shipping the JDK/Maven toolchain.
 
+Images are distributed via a **local registry** (`registry:2`, published on
+`localhost:5000`) rather than Kubernetes reading straight from Docker
+Desktop's shared image store. Every Deployment pulls
+`localhost:5000/<service>:latest` with `imagePullPolicy: Always`, so a pod
+always gets whatever was most recently pushed — the pattern each service's
+Jenkins pipeline uses (build → push → `kubectl rollout restart`). Docker
+Desktop's Kubernetes node pulls from `localhost:5000` with no extra
+insecure-registry configuration.
+
 ## 7. Kubernetes
 
 Everything runs in the `microservices` namespace on Docker Desktop's built-in

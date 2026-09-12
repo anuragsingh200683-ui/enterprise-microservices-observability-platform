@@ -45,10 +45,15 @@ See `ARCHITECTURE.md` for the full breakdown and ASCII diagram, and
 ```
 .
 ├── eureka-server/          Eureka service discovery server (8761)
-├── api-gateway/            Spring Cloud Gateway (8080)
-├── employee-service/       Employee CRUD microservice (8081)
-├── project-service/        Project CRUD microservice (8082)
-├── kubernetes/             All Kubernetes manifests (flat directory)
+│   ├── k8deployment/       Its own Deployment + Service manifest
+│   └── Jenkinsfile         Its own build-and-deploy pipeline
+├── api-gateway/            Spring Cloud Gateway (8080)          (same layout)
+├── employee-service/       Employee CRUD microservice (8081)    (same layout)
+├── project-service/        Project CRUD microservice (8082)     (same layout)
+├── platform/               Shared/cluster-wide manifests: namespace, the
+│                           microservices-config ConfigMap, and the
+│                           Prometheus/Grafana/OTel Collector/Jaeger stack
+├── jenkins/                Custom Jenkins image (Dockerfile, plugins, CasC)
 ├── ARCHITECTURE.md         Deep-dive architecture explanation + diagram
 ├── INTERVIEW-NOTES.md      Senior-level interview Q&A for this project
 └── README.md               This file
@@ -58,9 +63,16 @@ Each service directory follows:
 ```
 src/main/java/.../{controller,service,repository,dto,exception,model,config}
 src/main/resources/application.yml
+k8deployment/deployment.yaml   Deployment + Service for just this service
+Jenkinsfile                    Build image -> push to registry -> deploy
 Dockerfile
 pom.xml
 ```
+
+Manifests live next to the service they deploy (not in one shared
+`kubernetes/` folder) so each service's Jenkins pipeline only ever touches
+its own file — building/redeploying `employee-service` can never
+accidentally change `project-service`'s Deployment.
 
 ## 4. Prerequisites
 
@@ -99,37 +111,63 @@ skip straight to the Docker build commands in section 8.
 
 ## 8. Docker Commands
 
-```bash
-docker build -t local/eureka-server:1.0    ./eureka-server
-docker build -t local/employee-service:1.0 ./employee-service
-docker build -t local/project-service:1.0  ./project-service
-docker build -t local/api-gateway:1.0      ./api-gateway
+Images are distributed through a **local Docker registry** running as a
+container on `localhost:5000`, instead of Kubernetes reading straight from
+Docker Desktop's shared image store. Start it once:
 
-docker images | grep local/
+```bash
+docker run -d --restart=always -p 5000:5000 --name registry registry:2
 ```
 
-`imagePullPolicy: IfNotPresent` is set on every Deployment, so Kubernetes
-uses these local images directly — no registry/Docker Hub push required.
+Docker Desktop's Kubernetes node can pull from `localhost:5000` with no
+extra insecure-registry configuration — this is supported out of the box.
+
+Build and push each image:
+
+```bash
+docker build -t localhost:5000/eureka-server:latest    ./eureka-server
+docker build -t localhost:5000/employee-service:latest ./employee-service
+docker build -t localhost:5000/project-service:latest  ./project-service
+docker build -t localhost:5000/api-gateway:latest       ./api-gateway
+
+docker push localhost:5000/eureka-server:latest
+docker push localhost:5000/employee-service:latest
+docker push localhost:5000/project-service:latest
+docker push localhost:5000/api-gateway:latest
+```
+
+Every Deployment uses `imagePullPolicy: Always` against these `:latest`
+tags, so **pushing a new image alone does not redeploy it** — Kubernetes
+only pulls fresh on pod creation. After pushing, force a rollout so the
+running pods actually pick up the new image:
+
+```bash
+kubectl rollout restart deployment/<service-name> -n microservices
+```
+
+(Each service's Jenkins pipeline does exactly this build → push → rollout
+restart sequence automatically — see §18.)
 
 ## 9. Kubernetes Deployment Commands
 
-Apply in this order (dependency-sensible: discovery first, then the apps
-that depend on it, then the gateway, then observability):
+Apply the shared/platform manifests first, then each service's own
+manifest (dependency-sensible: discovery first, then the apps that depend
+on it, then the gateway, then observability):
 
 ```bash
-kubectl apply -f kubernetes/namespace.yaml
-kubectl apply -f kubernetes/microservices-configmap.yaml
+kubectl apply -f platform/namespace.yaml
+kubectl apply -f platform/microservices-configmap.yaml
 
-kubectl apply -f kubernetes/eureka-deployment.yaml -f kubernetes/eureka-service.yaml
+kubectl apply -f eureka-server/k8deployment/deployment.yaml
 
-kubectl apply -f kubernetes/employee-deployment.yaml -f kubernetes/employee-service.yaml
-kubectl apply -f kubernetes/project-deployment.yaml  -f kubernetes/project-service.yaml
-kubectl apply -f kubernetes/gateway-deployment.yaml  -f kubernetes/gateway-service.yaml
+kubectl apply -f employee-service/k8deployment/deployment.yaml
+kubectl apply -f project-service/k8deployment/deployment.yaml
+kubectl apply -f api-gateway/k8deployment/deployment.yaml
 
-kubectl apply -f kubernetes/prometheus-configmap.yaml -f kubernetes/prometheus-deployment.yaml -f kubernetes/prometheus-service.yaml
-kubectl apply -f kubernetes/grafana-configmap.yaml -f kubernetes/grafana-dashboard-configmap.yaml -f kubernetes/grafana-deployment.yaml -f kubernetes/grafana-service.yaml
-kubectl apply -f kubernetes/otel-collector-configmap.yaml -f kubernetes/otel-collector-deployment.yaml -f kubernetes/otel-collector-service.yaml
-kubectl apply -f kubernetes/jaeger-deployment.yaml -f kubernetes/jaeger-service.yaml
+kubectl apply -f platform/prometheus-configmap.yaml -f platform/prometheus-deployment.yaml -f platform/prometheus-service.yaml
+kubectl apply -f platform/grafana-configmap.yaml -f platform/grafana-dashboard-configmap.yaml -f platform/grafana-deployment.yaml -f platform/grafana-service.yaml
+kubectl apply -f platform/otel-collector-configmap.yaml -f platform/otel-collector-deployment.yaml -f platform/otel-collector-service.yaml
+kubectl apply -f platform/jaeger-deployment.yaml -f platform/jaeger-service.yaml
 ```
 
 ## 10. Verification Commands
@@ -230,7 +268,7 @@ traces can be correlated by ID.
 |-----------------------------------|--------------------------------------------------------------------------------|
 | Pod stuck `Pending`               | `kubectl describe pod -n microservices <pod>` → Events (usually resources)     |
 | `CrashLoopBackOff`                | `kubectl logs -n microservices <pod> --previous`                              |
-| `ImagePullBackOff`                | Confirm `docker images` has the tag and `imagePullPolicy: IfNotPresent` is set |
+| `ImagePullBackOff`                | Confirm the `registry` container is running and `docker push`ed (`curl http://localhost:5000/v2/_catalog`) — `imagePullPolicy: Always` means a pod always re-pulls, so a dead/missing registry breaks every future rollout |
 | Readiness never turns `1/1`       | `kubectl exec -n microservices <pod> -- wget -qO- localhost:<port>/actuator/health/readiness` |
 | Gateway returns 503               | Check target service is `Running`+`Ready` and registered in Eureka (`/eureka/apps`) |
 | Prometheus target `DOWN`          | `kubectl get pods -n microservices -o wide` (confirm pod IP), check `prometheus.io/*` annotations on the Deployment |
@@ -255,11 +293,12 @@ kubectl delete namespace microservices
 
 This removes every Deployment/Service/ConfigMap/RBAC object created for this
 project in one shot (the namespace itself, plus everything inside it). The
-`local/*:1.0` Docker images remain on disk; remove them too if you want a
-full teardown:
+built images remain in the local registry and on disk; remove those too for
+a full teardown:
 
 ```bash
-docker rmi local/eureka-server:1.0 local/employee-service:1.0 local/project-service:1.0 local/api-gateway:1.0
+docker rmi localhost:5000/eureka-server:latest localhost:5000/employee-service:latest localhost:5000/project-service:latest localhost:5000/api-gateway:latest
+docker rm -f registry
 ```
 
 ## 18. Jenkins CI/CD Pipelines
@@ -305,12 +344,14 @@ job, "Pipeline script from SCM" → Git → this repo's URL → branch `main` �
 script path `<service>/Jenkinsfile`, e.g. `employee-service/Jenkinsfile`),
 then click **Build Now** on whichever one you want to run.
 
-Each service's pipeline:
+Each service's pipeline (also requires the `registry:2` container from §8
+to be running, since `docker push` needs somewhere to push to):
 1. Checks out the repo.
-2. Builds only that service's image, tagged both `local/<service>:${BUILD_NUMBER}` and `:1.0`.
-3. `kubectl apply`s the namespace, the shared ConfigMap, and only that service's own Deployment + Service manifests.
-4. `kubectl set image`s that Deployment to the new `${BUILD_NUMBER}` tag and waits for `kubectl rollout status`.
-5. Smoke-tests by `kubectl exec`-ing into the deployment's own pod and hitting its actuator health endpoint directly — a self-check that doesn't depend on any other service, so one pipeline's smoke test never fails because of another service's state.
+2. Builds only that service's image, tagged `localhost:5000/<service>:latest`.
+3. Pushes it to the local registry.
+4. `kubectl apply`s the namespace, the shared ConfigMap, and only that service's own `k8deployment/deployment.yaml`.
+5. `kubectl rollout restart`s that Deployment (forcing a fresh `imagePullPolicy: Always` pull of the image just pushed) and waits for `kubectl rollout status`.
+6. Smoke-tests by `kubectl exec`-ing into the deployment's own pod and hitting its actuator health endpoint directly — a self-check that doesn't depend on any other service, so one pipeline's smoke test never fails because of another service's state.
 
 Trigger is manual ("Build Now") by design, to avoid exposing a local Jenkins
 to the internet for a GitHub webhook.

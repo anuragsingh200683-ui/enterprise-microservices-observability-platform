@@ -4,6 +4,7 @@ pipeline {
     environment {
         NAMESPACE = 'microservices'
         SERVICE   = 'eureka-server'
+        REGISTRY  = 'localhost:5000'
     }
 
     stages {
@@ -16,7 +17,15 @@ pipeline {
         stage('Build Image') {
             steps {
                 sh '''
-                    docker build -t local/${SERVICE}:${BUILD_NUMBER} -t local/${SERVICE}:1.0 ./${SERVICE}
+                    docker build -t ${REGISTRY}/${SERVICE}:latest ./${SERVICE}
+                '''
+            }
+        }
+
+        stage('Push Image') {
+            steps {
+                sh '''
+                    docker push ${REGISTRY}/${SERVICE}:latest
                 '''
             }
         }
@@ -24,9 +33,9 @@ pipeline {
         stage('Apply Manifests') {
             steps {
                 sh '''
-                    kubectl apply -f kubernetes/namespace.yaml
-                    kubectl apply -f kubernetes/microservices-configmap.yaml
-                    kubectl apply -f kubernetes/eureka-deployment.yaml -f kubernetes/eureka-service.yaml
+                    kubectl apply -f platform/namespace.yaml
+                    kubectl apply -f platform/microservices-configmap.yaml
+                    kubectl apply -f ${SERVICE}/k8deployment/deployment.yaml
                 '''
             }
         }
@@ -34,7 +43,7 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                    kubectl set image deployment/${SERVICE} ${SERVICE}=local/${SERVICE}:${BUILD_NUMBER} -n ${NAMESPACE}
+                    kubectl rollout restart deployment/${SERVICE} -n ${NAMESPACE}
                     kubectl rollout status deployment/${SERVICE} -n ${NAMESPACE} --timeout=180s
                 '''
             }
