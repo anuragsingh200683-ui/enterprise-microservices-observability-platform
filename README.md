@@ -261,3 +261,52 @@ full teardown:
 ```bash
 docker rmi local/eureka-server:1.0 local/employee-service:1.0 local/project-service:1.0 local/api-gateway:1.0
 ```
+
+## 18. Jenkins CI/CD Pipeline (optional)
+
+A Jenkins pipeline can build all 4 images and deploy them to the same local
+cluster, driven by `Jenkinsfile` at the repo root.
+
+**Build and run the Jenkins container** (runs alongside the app stack, with
+the Docker socket and your kubeconfig mounted so its pipeline can build
+images visible to the same Docker Desktop daemon and `kubectl apply`
+directly to the cluster):
+
+```bash
+docker build -t local/jenkins-microservices:1.0 ./jenkins
+
+docker volume create jenkins_home
+
+docker run -d --name jenkins \
+  --user root \
+  -p 8090:8080 -p 50000:50000 \
+  -v jenkins_home:/var/jenkins_home \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v <path-to-your-kubeconfig>:/var/jenkins_home/.kube/config:ro \
+  -e KUBECONFIG=/var/jenkins_home/.kube/config \
+  local/jenkins-microservices:1.0
+```
+
+> On Windows with Git Bash, prefix the `docker run` with `MSYS_NO_PATHCONV=1`
+> and pass the kubeconfig source as a plain Windows path (e.g.
+> `C:/Users/<you>/.kube/config`) — otherwise Git Bash silently rewrites the
+> Unix-style container paths (including inside `-e KUBECONFIG=...`) into
+> nonsense Windows paths.
+
+**Open Jenkins**: http://localhost:8090 — login `admin` / `admin123` (set in
+`jenkins/casc.yaml`; this container skips the setup wizard entirely via
+Jenkins Configuration-as-Code — nothing to click through).
+
+**Create the pipeline job** (one-time; a classic Pipeline job, "Pipeline
+script from SCM" → Git → this repo's URL → branch `main` → script path
+`Jenkinsfile`), then click **Build Now**.
+
+The pipeline:
+1. Checks out the repo.
+2. Builds all 4 images in parallel, tagged both `local/<service>:${BUILD_NUMBER}` and `:1.0`.
+3. `kubectl apply`s every manifest in `kubernetes/`.
+4. `kubectl set image`s each Deployment to the new `${BUILD_NUMBER}` tag and waits for `kubectl rollout status`.
+5. Smoke-tests `/api/employees` and `/api/projects` through the Gateway, retrying for up to a minute — right after a rollout, the Gateway's cached Eureka instance list can briefly still point at the just-terminated pod (Eureka's registry-fetch-interval is 30s), so a single immediate request can 500 even though the rollout itself succeeded.
+
+Trigger is manual ("Build Now") by design, to avoid exposing a local Jenkins
+to the internet for a GitHub webhook.
