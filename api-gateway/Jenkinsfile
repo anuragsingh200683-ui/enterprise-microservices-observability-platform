@@ -1,0 +1,61 @@
+pipeline {
+    agent any
+
+    environment {
+        NAMESPACE = 'microservices'
+        SERVICE   = 'api-gateway'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                sh '''
+                    docker build -t local/${SERVICE}:${BUILD_NUMBER} -t local/${SERVICE}:1.0 ./${SERVICE}
+                '''
+            }
+        }
+
+        stage('Apply Manifests') {
+            steps {
+                sh '''
+                    kubectl apply -f kubernetes/namespace.yaml
+                    kubectl apply -f kubernetes/microservices-configmap.yaml
+                    kubectl apply -f kubernetes/gateway-deployment.yaml -f kubernetes/gateway-service.yaml
+                '''
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh '''
+                    kubectl set image deployment/${SERVICE} ${SERVICE}=local/${SERVICE}:${BUILD_NUMBER} -n ${NAMESPACE}
+                    kubectl rollout status deployment/${SERVICE} -n ${NAMESPACE} --timeout=180s
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                sh '''
+                    kubectl exec -n ${NAMESPACE} deploy/${SERVICE} -- wget -qO- http://localhost:8080/actuator/health/readiness
+                    curl -sf http://host.docker.internal:30080/actuator/health > /dev/null
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "api-gateway build #${env.BUILD_NUMBER} deployed successfully."
+        }
+        failure {
+            echo "api-gateway build #${env.BUILD_NUMBER} failed - check stage logs above."
+        }
+    }
+}
