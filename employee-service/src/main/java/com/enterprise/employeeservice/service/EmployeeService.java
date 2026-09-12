@@ -43,21 +43,18 @@ public class EmployeeService {
     }
 
     public EmployeeResponse update(Long id, EmployeeRequest request) {
-        if (!repository.existsById(id)) {
-            throw new ResourceNotFoundException("Employee not found with id: " + id);
-        }
         Employee employee = new Employee(id, request.getName(), request.getEmail(),
                 request.getDepartment(), request.getSalary());
-        Employee saved = repository.save(employee);
+        Employee saved = repository.updateIfExists(id, employee)
+                .orElseThrow(() -> new ResourceNotFoundException("Employee not found with id: " + id));
         log.info("Updated employee id={}", saved.getId());
         return toResponse(saved);
     }
 
     public void delete(Long id) {
-        if (!repository.existsById(id)) {
+        if (!repository.deleteIfExists(id)) {
             throw new ResourceNotFoundException("Employee not found with id: " + id);
         }
-        repository.deleteById(id);
         log.info("Deleted employee id={}", id);
     }
 

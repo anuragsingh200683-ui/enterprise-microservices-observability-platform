@@ -42,20 +42,17 @@ public class ProjectService {
     }
 
     public ProjectResponse update(Long id, ProjectRequest request) {
-        if (!repository.existsById(id)) {
-            throw new ResourceNotFoundException("Project not found with id: " + id);
-        }
         Project project = new Project(id, request.getName(), request.getDescription(), request.getOwner());
-        Project saved = repository.save(project);
+        Project saved = repository.updateIfExists(id, project)
+                .orElseThrow(() -> new ResourceNotFoundException("Project not found with id: " + id));
         log.info("Updated project id={}", saved.getId());
         return toResponse(saved);
     }
 
     public void delete(Long id) {
-        if (!repository.existsById(id)) {
+        if (!repository.deleteIfExists(id)) {
             throw new ResourceNotFoundException("Project not found with id: " + id);
         }
-        repository.deleteById(id);
         log.info("Deleted project id={}", id);
     }
 

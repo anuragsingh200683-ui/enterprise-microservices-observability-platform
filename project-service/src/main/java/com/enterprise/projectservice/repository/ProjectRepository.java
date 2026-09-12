@@ -37,11 +37,11 @@ public class ProjectRepository {
         return project;
     }
 
-    public boolean existsById(Long id) {
-        return store.containsKey(id);
+    public Optional<Project> updateIfExists(Long id, Project project) {
+        return Optional.ofNullable(store.computeIfPresent(id, (key, existing) -> project));
     }
 
-    public void deleteById(Long id) {
-        store.remove(id);
+    public boolean deleteIfExists(Long id) {
+        return store.remove(id) != null;
     }
 }

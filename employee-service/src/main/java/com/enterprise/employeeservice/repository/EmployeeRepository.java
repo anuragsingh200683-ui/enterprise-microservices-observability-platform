@@ -37,11 +37,11 @@ public class EmployeeRepository {
         return employee;
     }
 
-    public boolean existsById(Long id) {
-        return store.containsKey(id);
+    public Optional<Employee> updateIfExists(Long id, Employee employee) {
+        return Optional.ofNullable(store.computeIfPresent(id, (key, existing) -> employee));
     }
 
-    public void deleteById(Long id) {
-        store.remove(id);
+    public boolean deleteIfExists(Long id) {
+        return store.remove(id) != null;
     }
 }

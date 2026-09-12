@@ -6,7 +6,7 @@ metadata:
   labels: #
     app: project-service
 spec:
-  replicas: 2
+  replicas: 1 #kept at 1 - the in-memory repository isn't shared across pods, so a second replica would silently diverge (writes to one pod invisible to the other); see INTERVIEW-NOTES.md
   revisionHistoryLimit: 5 #
   strategy:
     type: RollingUpdate
