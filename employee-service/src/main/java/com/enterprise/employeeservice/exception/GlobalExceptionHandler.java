@@ -10,6 +10,10 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import java.util.List;
 
+// Intentionally duplicated in project-service's exception package rather than extracted to a
+// shared module: each service builds from its own standalone Docker context (docker build
+// ./employee-service), so a shared module would need to be resolvable from Maven Central/a
+// private repo rather than a sibling directory. Keep the two copies in sync if you change one.
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 

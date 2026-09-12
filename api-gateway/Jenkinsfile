@@ -63,6 +63,26 @@ pipeline {
                     kubectl get svc -n ${NAMESPACE}
                     kubectl exec -n ${NAMESPACE} deploy/${IMAGE_NAME} -- wget -qO- http://localhost:8080/actuator/health/readiness
                     curl -sf http://host.docker.internal:30080/actuator/health > /dev/null
+
+                    # A Gateway change can break routing to either downstream service even
+                    # if the Gateway pod itself is healthy - prove both routes actually work,
+                    # retrying since a fresh Gateway pod's own Eureka cache takes a moment to
+                    # populate after rollout.
+                    for path in /api/employees /api/projects; do
+                      ok=false
+                      for attempt in \$(seq 1 12); do
+                        if curl -sf "http://host.docker.internal:30080\${path}" > /dev/null; then
+                          echo "\${path} routing OK (attempt \$attempt)"
+                          ok=true
+                          break
+                        fi
+                        sleep 5
+                      done
+                      if [ "\$ok" != "true" ]; then
+                        echo "\${path} routing failed after retries"
+                        exit 1
+                      fi
+                    done
                 """
             }
         }

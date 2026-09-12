@@ -165,7 +165,16 @@ kubectl apply -f project-service/k8deployment/deployment.yaml
 kubectl apply -f api-gateway/k8deployment/deployment.yaml
 
 kubectl apply -f platform/prometheus-configmap.yaml -f platform/prometheus-deployment.yaml -f platform/prometheus-service.yaml
+
+# Grafana's admin credentials come from a Secret, created imperatively so the
+# actual password is never committed to the repo (change admin-password for
+# anything beyond a local demo):
+kubectl create secret generic grafana-admin-credentials \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password=admin \
+  -n microservices
 kubectl apply -f platform/grafana-configmap.yaml -f platform/grafana-dashboard-configmap.yaml -f platform/grafana-deployment.yaml -f platform/grafana-service.yaml
+
 kubectl apply -f platform/otel-collector-configmap.yaml -f platform/otel-collector-deployment.yaml -f platform/otel-collector-service.yaml
 kubectl apply -f platform/jaeger-deployment.yaml -f platform/jaeger-service.yaml
 ```
@@ -244,8 +253,10 @@ by the `prometheus.io/scrape=true` pod annotation — no static target list.
 
 Open **http://localhost:30030**.
 
-- **Login**: `admin` / `admin` (local development default — change this for
-  anything beyond a laptop demo; see `grafana-deployment.yaml` env vars).
+- **Login**: whatever you set with the `kubectl create secret` command in §9
+  (`admin` / `admin` if you used the example as-is — a local development
+  default, not committed anywhere in the repo; change the
+  `admin-password` value in that command for anything beyond a laptop demo).
 - The **Prometheus** datasource is already configured (Settings → Data
   sources) — nothing to add manually.
 - Open the **"Microservices Observability Overview"** dashboard (already
@@ -326,8 +337,13 @@ docker run -d --name jenkins \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v <path-to-your-kubeconfig>:/var/jenkins_home/.kube/config:ro \
   -e KUBECONFIG=/var/jenkins_home/.kube/config \
+  -e JENKINS_ADMIN_PASSWORD=<your-password> \
   local/jenkins-microservices:1.0
 ```
+
+`JENKINS_ADMIN_PASSWORD` is read by `jenkins/casc.yaml` (`${JENKINS_ADMIN_PASSWORD:-admin123}`)
+— nothing is hardcoded in the repo; omit the flag and it falls back to
+`admin123` for a quick local demo.
 
 > On Windows with Git Bash, prefix the `docker run` with `MSYS_NO_PATHCONV=1`
 > and pass the kubeconfig source as a plain Windows path (e.g.
@@ -335,9 +351,10 @@ docker run -d --name jenkins \
 > Unix-style container paths (including inside `-e KUBECONFIG=...`) into
 > nonsense Windows paths.
 
-**Open Jenkins**: http://localhost:8090 — login `admin` / `admin123` (set in
-`jenkins/casc.yaml`; this container skips the setup wizard entirely via
-Jenkins Configuration-as-Code — nothing to click through).
+**Open Jenkins**: http://localhost:8090 — login `admin` / whatever you set
+as `JENKINS_ADMIN_PASSWORD` above (`admin123` if you didn't set one). This
+container skips the setup wizard entirely via Jenkins Configuration-as-Code
+— nothing to click through.
 
 **Create one pipeline job per service** (one-time each; a classic Pipeline
 job, "Pipeline script from SCM" → Git → this repo's URL → branch `main` →
@@ -363,10 +380,13 @@ to be running, since `docker push` needs somewhere to push to):
    then `kubectl rollout restart`s the Deployment (forcing a fresh
    `imagePullPolicy: Always` pull of the image just pushed).
 5. **Verify Deployment** — waits for `kubectl rollout status`, prints
-   `kubectl get pods -o wide` and `kubectl get svc`, then self-checks by
+   `kubectl get pods -o wide` and `kubectl get svc`, self-checks by
    `kubectl exec`-ing into the deployment's own pod and hitting its actuator
-   health endpoint directly — doesn't depend on any other service, so one
-   pipeline's verification never fails because of another service's state.
+   health endpoint directly (doesn't depend on any other service), **and**
+   for `employee-service`/`project-service`/`api-gateway` also retries a
+   real request through the Gateway's NodePort (`/api/employees` and/or
+   `/api/projects`) to prove the actual end-user route works, not just that
+   the pod itself is healthy.
 
 > **Why "Build JAR" and the Dockerfile both run Maven**: the Dockerfile is a
 > self-contained multi-stage build (`mvn package` happens again inside it),

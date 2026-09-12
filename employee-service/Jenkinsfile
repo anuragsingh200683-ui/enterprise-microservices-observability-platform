@@ -62,6 +62,20 @@ pipeline {
                     kubectl get pods -n ${NAMESPACE} -o wide
                     kubectl get svc -n ${NAMESPACE}
                     kubectl exec -n ${NAMESPACE} deploy/${IMAGE_NAME} -- wget -qO- http://localhost:8081/actuator/health/readiness
+
+                    # Self-check above only proves the pod itself is healthy; also prove the
+                    # Gateway can actually route to it end-to-end (retry - right after a
+                    # rollout the Gateway's cached Eureka instance list can briefly still
+                    # point at the just-terminated pod).
+                    for attempt in \$(seq 1 12); do
+                      if curl -sf http://host.docker.internal:30080/api/employees > /dev/null; then
+                        echo "gateway -> employee-service routing OK (attempt \$attempt)"
+                        exit 0
+                      fi
+                      sleep 5
+                    done
+                    echo "gateway -> employee-service routing failed after retries"
+                    exit 1
                 """
             }
         }
