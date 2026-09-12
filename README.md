@@ -344,14 +344,36 @@ job, "Pipeline script from SCM" → Git → this repo's URL → branch `main` �
 script path `<service>/Jenkinsfile`, e.g. `employee-service/Jenkinsfile`),
 then click **Build Now** on whichever one you want to run.
 
+Each pipeline declares a `tools {}` block — `maven 'Maven_3'`, `jdk 'JDK21'`,
+`dockerTool 'Docker'` — resolved from Tool installations baked into the
+Jenkins image (`/opt/maven`, `/opt/jdk21`, `/usr/local`) and configured in
+`jenkins/casc.yaml`; no manual "Global Tool Configuration" clicking needed.
+
 Each service's pipeline (also requires the `registry:2` container from §8
 to be running, since `docker push` needs somewhere to push to):
-1. Checks out the repo.
-2. Builds only that service's image, tagged `localhost:5000/<service>:latest`.
-3. Pushes it to the local registry.
-4. `kubectl apply`s the namespace, the shared ConfigMap, and only that service's own `k8deployment/deployment.yaml`.
-5. `kubectl rollout restart`s that Deployment (forcing a fresh `imagePullPolicy: Always` pull of the image just pushed) and waits for `kubectl rollout status`.
-6. Smoke-tests by `kubectl exec`-ing into the deployment's own pod and hitting its actuator health endpoint directly — a self-check that doesn't depend on any other service, so one pipeline's smoke test never fails because of another service's state.
+1. **Checkout** — explicit `git branch: 'main', url: '...'` step.
+2. **Build JAR** — `mvn clean package -DskipTests`, using the `Maven_3` /
+   `JDK21` tools (a real, fail-fast compile check, separate from the
+   Dockerfile's own internal Maven build stage — see note below).
+3. **Build Docker Image** — `docker build` tagged
+   `localhost:5000/<service>:latest`, then `docker push` to the local
+   registry, both in one stage.
+4. **Deploy to Kubernetes** — `kubectl apply`s the namespace, the shared
+   ConfigMap, and only that service's own `k8deployment/deployment.yaml`,
+   then `kubectl rollout restart`s the Deployment (forcing a fresh
+   `imagePullPolicy: Always` pull of the image just pushed).
+5. **Verify Deployment** — waits for `kubectl rollout status`, prints
+   `kubectl get pods -o wide` and `kubectl get svc`, then self-checks by
+   `kubectl exec`-ing into the deployment's own pod and hitting its actuator
+   health endpoint directly — doesn't depend on any other service, so one
+   pipeline's verification never fails because of another service's state.
+
+> **Why "Build JAR" and the Dockerfile both run Maven**: the Dockerfile is a
+> self-contained multi-stage build (`mvn package` happens again inside it),
+> kept that way so `docker build ./<service>` still works standalone with no
+> Jenkins involved. The pipeline's own `Build JAR` stage is intentionally
+> redundant — it fails fast on a compile error using the Jenkins agent's own
+> Maven/JDK21 tools, before spending time on a Docker build at all.
 
 Trigger is manual ("Build Now") by design, to avoid exposing a local Jenkins
 to the internet for a GitHub webhook.
@@ -359,9 +381,9 @@ to the internet for a GitHub webhook.
 ### Graphical stage-by-stage view (Blue Ocean)
 
 The Jenkins image bundles the **Blue Ocean** plugin, which renders each
-pipeline run as a horizontal graph of stages (Checkout → Build Image →
-Apply Manifests → Deploy to Kubernetes → Smoke Test), colored by status and
-clickable per stage for that stage's own log — the graphical view most
+pipeline run as a horizontal graph of stages (Checkout → Build JAR → Build
+Docker Image → Deploy to Kubernetes → Verify Deployment), colored by status
+and clickable per stage for that stage's own log — the graphical view most
 people mean by "Jenkins pipeline stages."
 
 Open it at **http://localhost:8090/blue/** — pick a pipeline (e.g.
