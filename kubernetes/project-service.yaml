@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: project-service
+  namespace: microservices
+  labels:
+    app: project-service
+spec:
+  type: ClusterIP
+  selector:
+    app: project-service
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082

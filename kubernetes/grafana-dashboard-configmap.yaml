@@ -1,0 +1,126 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-microservices
+  namespace: microservices
+data:
+  microservices-overview.json: |
+    {
+      "title": "Microservices Observability Overview",
+      "uid": "microservices-overview",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "10s",
+      "time": { "from": "now-15m", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Service Availability (up)",
+          "type": "stat",
+          "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "up{kubernetes_namespace=\"microservices\"}", "legendFormat": "{{application}}" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+            }
+          }
+        },
+        {
+          "id": 2,
+          "title": "HTTP Request Rate (req/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rate(http_server_requests_seconds_count[1m])) by (application)", "legendFormat": "{{application}}" }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "HTTP Request Count (total)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(http_server_requests_seconds_count) by (application)", "legendFormat": "{{application}}" }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "HTTP 4xx Errors (rate)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rate(http_server_requests_seconds_count{status=~\"4..\"}[5m])) by (application)", "legendFormat": "{{application}}" }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "HTTP 5xx Errors (rate)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\"}[5m])) by (application)", "legendFormat": "{{application}}" }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "HTTP Latency p95 (s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, application))", "legendFormat": "{{application}}" }
+          ]
+        },
+        {
+          "id": 7,
+          "title": "JVM Memory Used (bytes)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(jvm_memory_used_bytes) by (application, area)", "legendFormat": "{{application}}-{{area}}" }
+          ]
+        },
+        {
+          "id": 8,
+          "title": "JVM CPU Usage",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 30 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "process_cpu_usage", "legendFormat": "{{application}}" }
+          ]
+        },
+        {
+          "id": 9,
+          "title": "JVM Live Threads",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 30 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "jvm_threads_live_threads", "legendFormat": "{{application}}" }
+          ]
+        },
+        {
+          "id": 10,
+          "title": "GC Pause Rate (s/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 30 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rate(jvm_gc_pause_seconds_sum[5m])) by (application)", "legendFormat": "{{application}}" }
+          ]
+        }
+      ]
+    }

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: microservices-config
+  namespace: microservices
+data:
+  eureka.url: "http://eureka-server:8761/eureka/"
+  otel.endpoint: "http://otel-collector:4318/v1/traces"
